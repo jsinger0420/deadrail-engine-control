@@ -1,122 +1,116 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import heroImg from './assets/hero.png'
-import './App.css'
+import { useState, useRef } from "react";
+import {
+  RX_UUID,
+  TX_UUID,
+  STATUS_UUID,
+  SERVICE_UUID
+} from "./ble";
+import Controls from "./components/Controls";
+import StatusPanel from "./components/StatusPanel";
+import "./App.css";
 
-function App() {
-  const [count, setCount] = useState(0)
+export default function App() {
+  const [connected, setConnected] = useState(false);
+  const [status, setStatus] = useState({ speed: 0, direction: "stopped" });
+  const [log, setLog] = useState([]);
+
+  const deviceRef = useRef(null);
+  const rxRef = useRef(null);
+
+  const appendLog = (msg) => setLog((prev) => [...prev, msg]);
+
+  // Safe JSON decoder
+  const decodeJSON = (value) => {
+    const text = new TextDecoder().decode(value);
+    try {
+      return JSON.parse(text);
+    } catch {
+      appendLog("Non‑JSON message: " + text);
+      return null;
+    }
+  };
+
+  const connect = async () => {
+    try {
+      appendLog("Requesting BLE device…");
+
+      const device = await navigator.bluetooth.requestDevice({
+        acceptAllDevices: true,
+        optionalServices: [SERVICE_UUID]   // MUST match getPrimaryService()
+      });
+
+      deviceRef.current = device;
+
+      device.addEventListener("gattserverdisconnected", () => {
+        appendLog("Disconnected");
+        setConnected(false);
+      });
+
+      const server = await device.gatt.connect();
+      appendLog("Connected to GATT server");
+
+      const service = await server.getPrimaryService(SERVICE_UUID);
+      appendLog("Primary service found");
+
+      // RX (write)
+      rxRef.current = await service.getCharacteristic(RX_UUID);
+
+      // TX (notify)
+      const txChar = await service.getCharacteristic(TX_UUID);
+      await txChar.startNotifications();
+      txChar.addEventListener("characteristicvaluechanged", (e) => {
+        const text = new TextDecoder().decode(e.target.value);
+        appendLog("TX: " + text);
+      });
+
+      // STATUS (read + notify)
+      const statusChar = await service.getCharacteristic(STATUS_UUID);
+
+      // Initial read (may be empty)
+      const initial = await statusChar.readValue();
+      const parsed = decodeJSON(initial);
+      if (parsed) setStatus(parsed);
+
+      await statusChar.startNotifications();
+      statusChar.addEventListener("characteristicvaluechanged", (e) => {
+        const parsed = decodeJSON(e.target.value);
+        if (parsed) setStatus(parsed);
+      });
+
+      setConnected(true);
+      appendLog("Connected to Engine-Control");
+    } catch (err) {
+      appendLog("Error: " + err);
+    }
+  };
+
+  const sendCmd = async (cmd) => {
+    if (!rxRef.current) return;
+    appendLog("CMD: " + cmd);
+    await rxRef.current.writeValue(new TextEncoder().encode(cmd));
+  };
 
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.jsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
+    <div className="app">
+      <h1>Engine Controller</h1>
+
+      {!connected && (
+        <button className="connect-btn" onClick={connect}>
+          Connect to Engine
         </button>
-      </section>
+      )}
 
-      <div className="ticks"></div>
+      {connected && (
+        <>
+          <StatusPanel status={status} />
+          <Controls sendCmd={sendCmd} />
+        </>
+      )}
 
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
-
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
-  )
+      <div className="log">
+        <h3>Log</h3>
+        <pre>{log.join("\n")}</pre>
+      </div>
+    </div>
+  );
 }
-
-export default App
